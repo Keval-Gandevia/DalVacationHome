@@ -1,0 +1,277 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Resources:
+  LexBotHandlerLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: LexBotHandlerLayer
+      Description: Dependencies for LexBotHandlerFunction
+      Content:
+        S3Bucket: serverless-dal-vacation-home-s3-bucket
+        S3Key: python.zip
+      CompatibleRuntimes:
+        - python3.9
+
+  PubSubLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: PubSubLayer
+      Description: Dependencies for Publish/Subscribe Functions
+      Content:
+        S3Bucket: serverless-dal-vacation-home-s3-bucket
+        S3Key: nodejs.zip
+      CompatibleRuntimes:
+        - nodejs16.x
+
+  LexBotHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lexbothandler
+      Handler: lambda_function.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Code:
+        S3Bucket: serverless-dal-vacation-home-s3-bucket
+        S3Key: lexbothandler.zip
+      Runtime: python3.9
+      Timeout: 15
+      MemorySize: 128
+      Layers:
+        - !Ref LexBotHandlerLayer
+
+  PublishConcernFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: publishConcern
+      Handler: index.handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Code:
+        S3Bucket: serverless-dal-vacation-home-s3-bucket
+        S3Key: publishConcern.zip
+      Runtime: nodejs16.x
+      Timeout: 15
+      MemorySize: 128
+      Layers:
+        - !Ref PubSubLayer
+
+  SubscribeConcernFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: subscribeConcern
+      Handler: index.handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Code:
+        S3Bucket: serverless-dal-vacation-home-s3-bucket
+        S3Key: subscribeConcern.zip
+      Runtime: nodejs16.x
+      Timeout: 15
+      MemorySize: 128
+      Layers:
+        - !Ref PubSubLayer
+
+  CommunicationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Communications
+      AttributeDefinitions:
+        - AttributeName: messageId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: messageId
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: MyApiGateway
+
+  ApiGatewayResourceLexBotHandler:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: lexbothandler
+      RestApiId: !Ref ApiGateway
+
+  ApiGatewayResourcePublishConcern:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: publishConcern
+      RestApiId: !Ref ApiGateway
+
+  ApiGatewayResourceSubscribeConcern:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: SubscribeConcern
+      RestApiId: !Ref ApiGateway
+
+  LexBotHandlerMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref ApiGatewayResourceLexBotHandler
+      RestApiId: !Ref ApiGateway
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Credentials: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+          - LambdaArn: !GetAtt LexBotHandlerFunction.Arn
+      MethodResponses:
+        - StatusCode: 200
+      RequestParameters:
+        method.request.header.Access-Control-Allow-Origin: "'*'"
+
+  PublishConcernMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref ApiGatewayResourcePublishConcern
+      RestApiId: !Ref ApiGateway
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Credentials: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+          - LambdaArn: !GetAtt PublishConcernFunction.Arn
+      MethodResponses:
+        - StatusCode: 200
+      RequestParameters:
+        method.request.header.Access-Control-Allow-Origin: "'*'"
+
+  SubscribeConcernMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref ApiGatewayResourceSubscribeConcern
+      RestApiId: !Ref ApiGateway
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Credentials: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+          - LambdaArn: !GetAtt SubscribeConcernFunction.Arn
+      MethodResponses:
+        - StatusCode: 200
+      RequestParameters:
+        method.request.header.Access-Control-Allow-Origin: "'*'"
+
+  LexBotHandlerOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref ApiGatewayResourceLexBotHandler
+      RestApiId: !Ref ApiGateway
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+
+  PublishConcernOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref ApiGatewayResourcePublishConcern
+      RestApiId: !Ref ApiGateway
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+
+  SubscribeConcernOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref ApiGatewayResourceSubscribeConcern
+      RestApiId: !Ref ApiGateway
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+
+   ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: firstStage
+    DependsOn:
+      - LexBotHandlerMethod
+      - PublishConcernMethod
+      - SubscribeConcernMethod
+      - LexBotHandlerOptionsMethod
+      - PublishConcernOptionsMethod
+      - SubscribeConcernOptionsMethod
+
+  LexBotHandlerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LexBotHandlerFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/firstStage
+
+  PublishConcernInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt PublishConcernFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/firstStage
+
+  SubscribeConcernInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt SubscribeConcernFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/firstStage
+
+Outputs:
+  LexBotHandlerFunctionArn:
+    Value: !GetAtt LexBotHandlerFunction.Arn
+    Export:
+      Name: LexBotHandlerFunctionArn
+
+  PublishConcernFunctionArn:
+    Value: !GetAtt PublishConcernFunction.Arn
+    Export:
+      Name: PublishConcernFunctionArn
+
+  SubscribeConcernFunctionArn:
+    Value: !GetAtt SubscribeConcernFunction.Arn
+    Export:
+      Name: SubscribeConcernFunctionArn
+
+  CommunicationsTableArn:
+    Value: !GetAtt CommunicationsTable.Arn
+    Export:
+      Name: CommunicationsTableArn

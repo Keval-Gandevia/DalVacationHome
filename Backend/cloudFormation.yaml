@@ -1,0 +1,698 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Resources:
+  RoomsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Rooms
+      AttributeDefinitions:
+        - AttributeName: room_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: room_id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  ReservationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Reservations
+      AttributeDefinitions:
+        - AttributeName: reservation_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: reservation_id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  RoomDetailsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: RoomDetails
+      Code:
+        S3Bucket: "serverless-dal-vacation-home-s3"
+        S3Key: "RoomDetails.zip"
+      Handler: lambda_function.lambda_handler
+      Runtime: "python3.10"
+      Timeout: 60
+      MemorySize: 256
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+
+  RoomAvailabilityFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: RoomAvailability
+      Code:
+        S3Bucket: "serverless-dal-vacation-home-s3"
+        S3Key: "RoomAvailability.zip"
+      Handler: lambda_function.lambda_handler
+      Runtime: "python3.10"
+      Timeout: 60
+      MemorySize: 256
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+
+  AddCommentFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: AddComment
+      Code:
+        S3Bucket: "serverless-dal-vacation-home-s3"
+        S3Key: "AddComment.zip"
+      Handler: lambda_function.lambda_handler
+      Runtime: "python3.10"
+      Timeout: 60
+      MemorySize: 256
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+
+  ReservationDetailsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ReservationDetails
+      Code:
+        S3Bucket: "serverless-dal-vacation-home-s3"
+        S3Key: "ReservationDetails.zip"
+      Handler: lambda_function.lambda_handler
+      Runtime: "python3.10"
+      Timeout: 60
+      MemorySize: 256
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+
+
+  AddUpdateRoomFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: AddUpdateRoom
+      Code:
+        S3Bucket: "serverless-dal-vacation-home-s3"
+        S3Key: "AddUpdateRoom.zip"
+      Handler: lambda_function.lambda_handler
+      Runtime: "python3.10"
+      Timeout: 60
+      MemorySize: 256
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+
+  DeleteRoomFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: DeleteRoom
+      Code:
+        S3Bucket: "serverless-dal-vacation-home-s3"
+        S3Key: "DeleteRoom.zip"
+      Handler: lambda_function.lambda_handler
+      Runtime: "python3.10"
+      Timeout: 60
+      MemorySize: 256
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+
+
+  ReservationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: Reservation.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: false
+      VisibilityTimeout: 60
+  
+  ReservationSQSPolicy: 
+    Type: AWS::SQS::QueuePolicy
+    Properties: 
+      Queues: 
+        - !Sub "https://sqs:${AWS::Region}.amazonaws.com/${AWS::AccountId}/${ReservationQueue.QueueName}"
+      PolicyDocument: 
+        Statement: 
+          - 
+            Action:
+              - "SQS:SendMessage" 
+              - "SQS:ReceiveMessage"
+            Effect: "Allow"
+            Resource: !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:${ReservationQueue.QueueName}"
+            Principal:
+              AWS:
+                - !Sub "${AWS::AccountId}" 
+    DependsOn:
+      - ReservationQueue
+  
+  RoomReservationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: RoomReservation
+      Code:
+        S3Bucket: "serverless-dal-vacation-home-s3"
+        S3Key: "RoomReservation.zip"
+      Handler: lambda_function.lambda_handler
+      Runtime: "python3.10"
+      Timeout: 60
+      MemorySize: 256
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+  
+  LambdaSQSTrigger:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 10
+      EventSourceArn: !GetAtt ReservationQueue.Arn
+      FunctionName: !GetAtt RoomReservationFunction.Arn
+      Enabled: true
+    DependsOn:
+      - RoomReservationFunction
+      - ReservationQueue
+
+  RoomBookingGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: "RoomBookingAPI"
+      Description: "API gateway for Room Booking system"
+    DependsOn:
+      - RoomReservationFunction
+      - ReservationQueue
+  
+  RoomBookingresponse4xx:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref RoomBookingGateway
+      ResponseType: DEFAULT_4XX
+      StatusCode: '404'
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+    DependsOn:
+      - RoomReservationFunction
+      - ReservationQueue
+
+  RoomBookingresponse5xx:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref RoomBookingGateway
+      ResponseType: DEFAULT_5XX
+      StatusCode: '500'
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+    DependsOn:
+      - RoomReservationFunction
+      - ReservationQueue
+
+  roomReservationResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt
+        - RoomBookingGateway
+        - RootResourceId
+      PathPart: "room-reservation"
+      RestApiId: !Ref RoomBookingGateway
+    DependsOn:
+      - RoomReservationFunction
+      - ReservationQueue
+
+  roomReservationOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref roomReservationResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST, OPTIONS'"
+        RequestTemplates:
+          "application/json": "{\"statusCode\": 200}"
+        PassthroughBehavior: WHEN_NO_MATCH
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+          ResponseModels:
+            application/json: "Empty"
+    DependsOn:
+      - RoomReservationFunction
+      - ReservationQueue
+  
+  roomReservationPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref roomReservationResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: AWS
+        Credentials: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+        IntegrationHttpMethod: POST
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+                method.response.header.Access-Control-Allow-Origin: "'*'"
+                method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                method.response.header.Access-Control-Allow-Methods: "'POST, OPTIONS'"
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestParameters:
+          integration.request.header.Content-Type: '''application/x-www-form-urlencoded'''
+        RequestTemplates:
+          "application/json": "#set($dedupId = $context.requestId)\n#set($groupId = $input.json('$.data.groupId'))\nAction=SendMessage&MessageBody=$input.body&MessageGroupId=$groupId&MessageDeduplicationId=$dedupId"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:sqs:path/${AWS::AccountId}/${ReservationQueue.QueueName}"
+          # Fn::Join:
+          #   - ''
+          #   - - 'arn:aws:apigateway:'
+          #     - Ref: AWS::Region
+          #     - :sqs:path/
+          #     - Ref: AWS::AccountId
+          #     - /
+          #     - Fn::GetAtt:
+          #       - ReservationQueue
+          #       - QueueName
+      MethodResponses:
+        - ResponseModels:
+            application/json: Empty
+          StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+    DependsOn:
+      - RoomReservationFunction
+      - ReservationQueue
+  
+  roomDetailsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt
+        - RoomBookingGateway
+        - RootResourceId
+      PathPart: "room-details"
+      RestApiId: !Ref RoomBookingGateway
+    DependsOn:
+      - RoomDetailsFunction
+      
+  roomDetailsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref roomDetailsResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST, OPTIONS'"
+        RequestTemplates:
+          "application/json": "{\"statusCode\": 200}"
+        PassthroughBehavior: WHEN_NO_MATCH
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+          ResponseModels:
+            application/json: "Empty"
+
+  roomDetailsPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref roomDetailsResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Credentials: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RoomDetailsFunction.Arn}/invocations"
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        ContentHandling: CONVERT_TO_TEXT
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+          ResponseModels:
+            application/json: "Empty"
+
+  roomAvailabilityResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt
+        - RoomBookingGateway
+        - RootResourceId
+      PathPart: "room-availability"
+      RestApiId: !Ref RoomBookingGateway
+    DependsOn:
+      - RoomAvailabilityFunction
+  
+  roomAvailabilityOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref roomAvailabilityResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST, OPTIONS'"
+        RequestTemplates:
+          "application/json": "{\"statusCode\": 200}"
+        PassthroughBehavior: WHEN_NO_MATCH
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+          ResponseModels:
+            application/json: "Empty"
+  
+  roomAvailabilityPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref roomAvailabilityResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Credentials: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RoomAvailabilityFunction.Arn}/invocations"
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        ContentHandling: CONVERT_TO_TEXT
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: "Empty"
+  
+  addCommentResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt
+        - RoomBookingGateway
+        - RootResourceId
+      PathPart: "add-comment"
+      RestApiId: !Ref RoomBookingGateway
+    DependsOn:
+      - AddCommentFunction
+  
+  addCommentOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref addCommentResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST, OPTIONS'"
+        RequestTemplates:
+          "application/json": "{\"statusCode\": 200}"
+        PassthroughBehavior: WHEN_NO_MATCH
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+          ResponseModels:
+            application/json: "Empty"
+  
+  addCommentPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref addCommentResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Credentials: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AddCommentFunction.Arn}/invocations"
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        ContentHandling: CONVERT_TO_TEXT
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: "Empty"
+
+  reservationDetailsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt
+        - RoomBookingGateway
+        - RootResourceId
+      PathPart: "reservation-details"
+      RestApiId: !Ref RoomBookingGateway
+    DependsOn:
+      - ReservationDetailsFunction
+  
+  reservationDetailsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref reservationDetailsResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST, OPTIONS'"
+        RequestTemplates:
+          "application/json": "{\"statusCode\": 200}"
+        PassthroughBehavior: WHEN_NO_MATCH
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+          ResponseModels:
+            application/json: "Empty"
+  
+  reservationDetailsPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref reservationDetailsResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Credentials: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ReservationDetailsFunction.Arn}/invocations"
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        ContentHandling: CONVERT_TO_TEXT
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: "Empty"
+
+
+    addUpdateRoomResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt
+        - RoomBookingGateway
+        - RootResourceId
+      PathPart: "add-update-room"
+      RestApiId: !Ref RoomBookingGateway
+    DependsOn:
+      - AddUpdateRoomFunction
+
+  addUpdateRoomOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref addUpdateRoomResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST, OPTIONS'"
+        RequestTemplates:
+          "application/json": "{\"statusCode\": 200}"
+        PassthroughBehavior: WHEN_NO_MATCH
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+          ResponseModels:
+            application/json: "Empty"
+
+  addUpdateRoomPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref addUpdateRoomResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Credentials: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AddUpdateRoomFunction.Arn}/invocations"
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        ContentHandling: CONVERT_TO_TEXT
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: "Empty"
+
+  deleteRoomResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt
+        - RoomBookingGateway
+        - RootResourceId
+      PathPart: "delete-room"
+      RestApiId: !Ref RoomBookingGateway
+    DependsOn:
+      - DeleteRoomFunction
+
+  deleteRoomOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref deleteRoomResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST, OPTIONS'"
+        RequestTemplates:
+          "application/json": "{\"statusCode\": 200}"
+        PassthroughBehavior: WHEN_NO_MATCH
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+          ResponseModels:
+            application/json: "Empty"
+
+  deleteRoomPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref deleteRoomResource
+      RestApiId: !Ref RoomBookingGateway
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Credentials: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeleteRoomFunction.Arn}/invocations"
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        ContentHandling: CONVERT_TO_TEXT
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: "Empty"
+
+
+  RoomBookingGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: 
+      - RoomBookingresponse4xx
+      - RoomBookingresponse5xx
+      - roomReservationOptionsMethod
+      - roomReservationPostMethod
+      - roomDetailsOptionsMethod
+      - roomDetailsPostMethod
+      - roomAvailabilityOptionsMethod
+      - roomAvailabilityPostMethod
+      - addCommentOptionsMethod
+      - addCommentPostMethod
+      - reservationDetailsOptionsMethod
+      - reservationDetailsPostMethod
+      - addUpdateRoomOptionsMethod
+      - addUpdateRoomPostMethod
+      - deleteRoomOptionsMethod
+      - deleteRoomPostMethod
+    Properties:
+      Description: RoomBooking API deployment
+      RestApiId: !Ref RoomBookingGateway
+    
+
+  RoomBookingGatewayStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref RoomBookingGatewayDeployment
+      RestApiId: !Ref RoomBookingGateway
+      StageName: 'prod'
+
+Outputs:
+  RoomsTableName:
+    Description: "The name of the Rooms table"
+    Value: !Ref RoomsTable
+  ReservationsTableName:
+    Description: "The name of the Reservations table"
+    Value: !Ref ReservationsTable
+  RoomBookingApiUrl:
+    Description: "The URL of the Room Booking API"
+    Value: !Sub "https://${RoomBookingGateway}.execute-api.${AWS::Region}.amazonaws.com/${RoomBookingGatewayStage}"
+  
+

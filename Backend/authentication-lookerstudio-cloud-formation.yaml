@@ -1,0 +1,267 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: serverless-dal-vacation-home-user-pool
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+        - Name: firstName
+          AttributeDataType: String
+          Mutable: true
+        - Name: lastName
+          AttributeDataType: String
+          Mutable: true
+        - Name: role
+          AttributeDataType: String
+          Mutable: true
+        - Name: caesarCipherKey
+          AttributeDataType: Number
+          Mutable: true
+        - Name: securityQueAns
+          AttributeDataType: String
+          Mutable: true
+      MfaConfiguration: "OFF"
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      LambdaConfig:
+        PostConfirmation: !GetAtt PostConfirmationLambdaFunction.Arn
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: dal-vacation-home-app-client
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      GenerateSecret: false
+
+  PostConfirmationLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: serverless-post-registration-lambda
+      Handler: index.handler
+      Runtime: nodejs20.x
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Code:
+        S3Bucket: serverless-dal-vacation-home-s3-bucket
+        S3Key: post-registration-lambda.zip
+      Timeout: 45
+      Architectures:
+        - x86_64
+
+  UserPoolLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PostConfirmationLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  PostLoginLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: serverless-post-login-lambda
+      Handler: index.handler
+      Runtime: nodejs20.x
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Code:
+        S3Bucket: serverless-dal-vacation-home-s3-bucket
+        S3Key: post-login-lambda.zip
+      Timeout: 30
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          GOOGLE_APPLICATION_CREDENTIALS: '/var/task/service-account-key.json'
+      Layers:
+        - !Ref GoogleBigQueryLayer
+
+  PostLoginLambdaUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      AuthType: NONE
+      TargetFunctionArn: !GetAtt PostLoginLambdaFunction.Arn
+      Cors:
+        AllowOrigins:
+          - "*"
+        AllowHeaders:
+          - "*"
+        AllowMethods:
+          - "*"
+
+  PostLoginLambdaUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt PostLoginLambdaFunction.Arn
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  GetUserDetailsLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: serverless-get-user-details-lambda
+      Handler: index.handler
+      Runtime: nodejs20.x
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Code:
+        S3Bucket: serverless-dal-vacation-home-s3-bucket
+        S3Key: get-user-details-lambda.zip
+      Timeout: 30
+      Architectures:
+        - x86_64
+
+  GetUserDetailsLambdaUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      AuthType: NONE
+      TargetFunctionArn: !GetAtt GetUserDetailsLambdaFunction.Arn
+      Cors:
+        AllowOrigins:
+          - "*"
+        AllowHeaders:
+          - "*"
+        AllowMethods:
+          - "*"
+  
+  GetUserDetailsLambdaUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt GetUserDetailsLambdaFunction.Arn
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Users
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+
+  SecurityQuestionAnswerTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SecurityQuestionAnswer
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  SyncUserDataWithLookerStudioLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: serverless-sync-user-data-with-looker-studio
+      Handler: index.handler
+      Runtime: nodejs20.x
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Code:
+        S3Bucket: serverless-dal-vacation-home-s3-bucket
+        S3Key: sync-user-data-looker-studio-lambda.zip
+      Timeout: 45
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          GOOGLE_APPLICATION_CREDENTIALS: '/var/task/service-account-key.json'
+      Layers:
+        - !Ref AwsSdkGoogleBigQueryLayer
+
+  SyncUserDataWithLookerStudioLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SyncUserDataWithLookerStudioLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: dynamodb.amazonaws.com
+      SourceArn: !GetAtt UsersTable.StreamArn
+
+  SyncUserDataWithLookerStudioLambdaEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt UsersTable.StreamArn
+      FunctionName: !Ref SyncUserDataWithLookerStudioLambdaFunction
+      Enabled: true
+      BatchSize: 1
+      StartingPosition: LATEST
+
+  GoogleBigQueryLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: serverless-google-bigquery-layer
+      Content:
+        S3Bucket: serverless-dal-vacation-home-s3-bucket
+        S3Key: google-bigquery-layer.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - nodejs20.x
+
+  AwsSdkGoogleBigQueryLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: serverless-aws-sdk-google-bigquery-layer
+      Content:
+        S3Bucket: serverless-dal-vacation-home-s3-bucket
+        S3Key: aws-sdk-google-api-layer.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - nodejs20.x
+
+Outputs:
+  UserPoolId:
+    Description: "User Pool ID"
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Description: "User Pool Client ID"
+    Value: !Ref UserPoolClient
+  LambdaFunctionArn:
+    Description: "Post Confirmation Lambda Function ARN"
+    Value: !GetAtt PostConfirmationLambdaFunction.Arn
+  UsersTableName:
+    Description: "Users DynamoDB Table Name"
+    Value: !Ref UsersTable
+  SecurityQuestionAnswerTableName:
+    Description: "SecurityQuestionAnswer DynamoDB Table Name"
+    Value: !Ref SecurityQuestionAnswerTable
+  GetUserDetailsLambdaUrl:
+    Description: "Get User Details Lambda Function URL"
+    Value: !GetAtt GetUserDetailsLambdaUrl.FunctionUrl
+  PostLoginLambdaUrl:
+    Description: "Post Login Lambda Function URL"
+    Value: !GetAtt PostLoginLambdaUrl.FunctionUrl
+  SyncUserDataWithLookerStudioLambdaFunctionArn:
+    Description: "Sync User Data with Looker Studio Lambda Function ARN"
+    Value: !GetAtt SyncUserDataWithLookerStudioLambdaFunction.Arn
